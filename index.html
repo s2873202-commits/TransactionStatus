@@ -3,11 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多平台交易損益紀錄工具</title>
+    <title>多平台交易損益紀錄工具 (雲端同步版)</title>
     <!-- 引入 Tailwind CSS 快速樣式庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 Chart.js 圖表庫 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 引入 Firebase 8.x SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
 
@@ -17,11 +20,14 @@
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
             <div>
                 <h1 class="text-2xl font-bold text-emerald-400">📊 多平台交易損益紀錄工具</h1>
-                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計</p>
+                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步中）</p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
                 <label class="text-sm text-slate-300">統計月份：</label>
                 <input type="month" id="monthFilter" onchange="renderApp()" class="bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                <!-- 匯入與匯出按鈕 -->
+                <button onclick="document.getElementById('importFileInput').click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯入 JSON</button>
+                <input type="file" id="importFileInput" accept=".json" onchange="importData(event)" class="hidden">
                 <button onclick="exportData()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯出 JSON</button>
             </div>
         </div>
@@ -125,30 +131,122 @@
     </div>
 
     <script>
-        // 初始化範例資料或從 localStorage 載入
-        let records = JSON.parse(localStorage.getItem('pnl_tracker_records')) || [
-            { id: '1', date: '2026-08-01', platform: '富邦證券', asset: '台積電 (2330)', pnl: 15000, fee: 320, note: '當沖順勢' },
-            { id: '2', date: '2026-08-03', platform: '凱基證券', asset: '聯發科 (2454)', pnl: -4500, fee: 210, note: '反彈停損' },
-            { id: '3', date: '2026-08-05', platform: 'Binance', asset: 'BTC/USDT', pnl: 8200, fee: 150, note: '突破追單' },
-            { id: '4', date: '2026-08-10', platform: '富邦證券', asset: '長榮 (2603)', pnl: 6800, fee: 180, note: '尾盤平倉' }
-        ];
+        // ----------------------------------------------------
+        // 1. Firebase 設定（請在此填入您的專案金鑰）
+        // ----------------------------------------------------
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
 
+        // 初始化 Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const recordsRef = db.ref('pnl_records');
+
+        let records = [];
         let chartInstance = null;
 
-        // 頁面初次載入
+        // ----------------------------------------------------
+        // 2. 頁面載入與舊資料無縫轉移
+        // ----------------------------------------------------
         document.addEventListener('DOMContentLoaded', () => {
-            // 預設月份設為當前月份 (YYYY-MM)
             const today = new Date();
             const yearMonth = today.toISOString().slice(0, 7);
             document.getElementById('monthFilter').value = yearMonth;
             document.getElementById('inputDate').value = today.toISOString().slice(0, 10);
 
-            renderApp();
+            // 監聽 Firebase 雲端資料變更（即時同步）
+            recordsRef.on('value', (snapshot) => {
+                const cloudData = snapshot.val();
+                
+                // 檢查是否有瀏覽器原本的 localStorage 舊資料
+                const localData = JSON.parse(localStorage.getItem('pnl_tracker_records'));
+
+                if (!cloudData && localData && localData.length > 0) {
+                    // 如果雲端尚無資料，但舊電腦有 localStorage，自動將舊資料同步上傳雲端
+                    records = localData;
+                    saveData();
+                    console.log('已自動將 localStorage 資料移轉上雲端');
+                } else if (cloudData) {
+                    // 如果雲端已有資料，直接使用雲端資料
+                    records = Array.isArray(cloudData) ? cloudData : Object.values(cloudData);
+                } else {
+                    records = [];
+                }
+
+                renderApp();
+            });
         });
 
-        // 儲存資料到 localStorage
+        // 儲存資料到 Firebase 雲端
         function saveData() {
-            localStorage.setItem('pnl_tracker_records', JSON.stringify(records));
+            recordsRef.set(records);
+        }
+
+        // ----------------------------------------------------
+        // 3. 匯入與匯出邏輯 (相容多種 JSON 格式)
+        // ----------------------------------------------------
+        function importData(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    let importedRecords = JSON.parse(event.target.result);
+
+                    if (!Array.isArray(importedRecords) && typeof importedRecords === 'object') {
+                        if (Array.isArray(importedRecords.records)) {
+                            importedRecords = importedRecords.records;
+                        } else if (Array.isArray(importedRecords.data)) {
+                            importedRecords = importedRecords.data;
+                        } else {
+                            const arrayKey = Object.keys(importedRecords).find(key => Array.isArray(importedRecords[key]));
+                            if (arrayKey) importedRecords = importedRecords[arrayKey];
+                        }
+                    }
+
+                    if (Array.isArray(importedRecords)) {
+                        importedRecords = importedRecords.map(item => ({
+                            id: item.id || Date.now().toString() + Math.random().toString().slice(2, 6),
+                            date: item.date || new Date().toISOString().slice(0, 10),
+                            platform: item.platform || '未指定',
+                            asset: item.asset || '未指定',
+                            pnl: parseFloat(item.pnl) || 0,
+                            fee: parseFloat(item.fee) || 0,
+                            note: item.note || ''
+                        }));
+
+                        const isOverwrite = confirm('點擊「確定」將【覆蓋】雲端資料；點擊「取消」將【合併】新舊資料。');
+                        
+                        if (isOverwrite) {
+                            records = importedRecords;
+                        } else {
+                            const existingIds = new Set(records.map(r => r.id));
+                            importedRecords.forEach(item => {
+                                if (!existingIds.has(item.id)) {
+                                    records.push(item);
+                                }
+                            });
+                        }
+
+                        saveData();
+                        alert('成功匯入資料並已同步至雲端！');
+                    } else {
+                        alert('匯入失敗：JSON 格式不符。');
+                    }
+                } catch (err) {
+                    alert('讀取檔案失敗，請確定是否為正確的 JSON 格式檔案。');
+                }
+                e.target.value = '';
+            };
+            reader.readAsText(file);
         }
 
         // 新增紀錄處理
@@ -168,11 +266,9 @@
             records.push(newRecord);
             saveData();
 
-            // 如果新增紀錄的月份與當前篩選器相同，切換到該月份
             const recordMonth = newRecord.date.slice(0, 7);
             document.getElementById('monthFilter').value = recordMonth;
 
-            // 清空部分欄位
             document.getElementById('inputAsset').value = '';
             document.getElementById('inputPnL').value = '';
             document.getElementById('inputFee').value = '0';
@@ -194,15 +290,12 @@
         function renderApp() {
             const selectedMonth = document.getElementById('monthFilter').value;
             
-            // 篩選當月資料
-            const filteredRecords = records.filter(r => r.date.startsWith(selectedMonth));
+            const filteredRecords = records.filter(r => r.date && r.date.startsWith(selectedMonth));
             filteredRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-            // 計算統計數據
             let totalNetPnL = 0;
             let totalFee = 0;
             let winCount = 0;
-
             const platformPnLMap = {};
 
             filteredRecords.forEach(r => {
@@ -211,14 +304,12 @@
                 totalFee += r.fee;
                 if (net > 0) winCount++;
 
-                // 各平台累計
                 platformPnLMap[r.platform] = (platformPnLMap[r.platform] || 0) + net;
             });
 
             const totalCount = filteredRecords.length;
             const winRate = totalCount > 0 ? ((winCount / totalCount) * 100).toFixed(1) : '0.0';
 
-            // 更新統計卡片
             const pnlElem = document.getElementById('statMonthlyPnL');
             pnlElem.textContent = `$ ${totalNetPnL.toLocaleString()}`;
             pnlElem.className = `text-2xl font-extrabold mt-2 ${totalNetPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
@@ -227,7 +318,6 @@
             document.getElementById('statTotalCount').textContent = `${totalCount} 筆`;
             document.getElementById('statTotalFee').textContent = `$ ${totalFee.toLocaleString()}`;
 
-            // 渲染表格
             const tableBody = document.getElementById('recordsTableBody');
             if (filteredRecords.length === 0) {
                 tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-slate-500">當月無交易紀錄</td></tr>`;
@@ -252,7 +342,6 @@
                 }).join('');
             }
 
-            // 更新圖表
             renderChart(platformPnLMap);
         }
 

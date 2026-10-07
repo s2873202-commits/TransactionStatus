@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多平台交易損益紀錄工具 (雲端同步版)</title>
+    <title>多平台交易損益紀錄工具 (雲端同步進階版)</title>
     <!-- 引入 Tailwind CSS 快速樣式庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 Chart.js 圖表庫 -->
@@ -87,9 +87,20 @@
                             <input type="number" id="inputFee" placeholder="0" min="0" step="any" value="0" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
                         </div>
                     </div>
+                    <!-- 風報比設定區塊 -->
+                    <div class="grid grid-cols-2 gap-3 p-3 bg-slate-700/40 rounded-lg border border-slate-700">
+                        <div>
+                            <label class="block text-xs text-emerald-400 mb-1">預計獲利 (TP)</label>
+                            <input type="number" id="inputTargetProfit" placeholder="例如 6000" min="0" step="any" class="w-full bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 text-xs focus:outline-none focus:border-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-rose-400 mb-1">預計虧損/停損 (SL)</label>
+                            <input type="number" id="inputMaxLoss" placeholder="例如 2000" min="0" step="any" class="w-full bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 text-xs focus:outline-none focus:border-rose-500">
+                        </div>
+                    </div>
                     <div>
                         <label class="block text-xs text-slate-400 mb-1">備註 / 策略</label>
-                        <input type="text" id="inputNote" placeholder="例如：突破追單、當沖停損" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        <textarea id="inputNote" rows="2" placeholder="例如：突破追單、當沖停損，輸入較多文字可於列表點擊查看" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500 text-sm"></textarea>
                     </div>
                     <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition shadow-md">儲存紀錄</button>
                 </form>
@@ -104,6 +115,14 @@
             </div>
         </div>
 
+        <!-- 每日累計損益資金曲線圖 -->
+        <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md">
+            <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📉 本月份每日累計損益曲線</h2>
+            <div class="h-[280px] relative">
+                <canvas id="dailyCumulativeChart"></canvas>
+            </div>
+        </div>
+
         <!-- 歷史紀錄明細列表 -->
         <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md">
             <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📋 當月交易明細</h2>
@@ -114,6 +133,7 @@
                             <th class="py-3 px-4">日期</th>
                             <th class="py-3 px-4">平台</th>
                             <th class="py-3 px-4">標的</th>
+                            <th class="py-3 px-4 text-center">風報比 (TP:SL)</th>
                             <th class="py-3 px-4 text-right">實現損益</th>
                             <th class="py-3 px-4 text-right">手續費/稅</th>
                             <th class="py-3 px-4 text-right">淨損益</th>
@@ -130,20 +150,30 @@
 
     </div>
 
+    <!-- 備註詳情 Modal 彈窗 -->
+    <div id="noteModal" class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-slate-800 border border-slate-700 rounded-xl max-w-md w-full p-6 shadow-2xl relative">
+            <h3 class="text-lg font-bold text-emerald-400 mb-2">📝 交易策略與備註詳情</h3>
+            <div id="modalDateAsset" class="text-xs text-slate-400 mb-4"></div>
+            <div id="modalNoteContent" class="bg-slate-900/80 p-4 rounded-lg border border-slate-700/60 text-slate-200 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto"></div>
+            <div class="mt-6 flex justify-end">
+                <button onclick="closeNoteModal()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg text-sm transition">關閉</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // ----------------------------------------------------
-        // 1. Firebase 設定（請在此填入您的專案金鑰）
-        // ----------------------------------------------------
- const firebaseConfig = {
-  apiKey: "AIzaSyCWx0lVV819nGYeEyCJ9ZSbJhAUqGCO5Ro",
-  authDomain: "loan-867b2.firebaseapp.com",
-  databaseURL: "https://loan-867b2-default-rtdb.firebaseio.com",
-  projectId: "loan-867b2",
-  storageBucket: "loan-867b2.firebasestorage.app",
-  messagingSenderId: "512494811629",
-  appId: "1:512494811629:web:c6ea74cf201b79c6850fe4",
-  measurementId: "G-G0EFH9FLB5"
-};
+        // 1. Firebase 設定
+        const firebaseConfig = {
+            apiKey: "AIzaSyCWx0lVV819nGYeEyCJ9ZSbJhAUqGCO5Ro",
+            authDomain: "loan-867b2.firebaseapp.com",
+            databaseURL: "https://loan-867b2-default-rtdb.firebaseio.com",
+            projectId: "loan-867b2",
+            storageBucket: "loan-867b2.firebasestorage.app",
+            messagingSenderId: "512494811629",
+            appId: "1:512494811629:web:c6ea74cf201b79c6850fe4",
+            measurementId: "G-G0EFH9FLB5"
+        };
 
         // 初始化 Firebase
         firebase.initializeApp(firebaseConfig);
@@ -152,30 +182,23 @@
 
         let records = [];
         let chartInstance = null;
+        let dailyCumulativeChartInstance = null;
 
-        // ----------------------------------------------------
-        // 2. 頁面載入與舊資料無縫轉移
-        // ----------------------------------------------------
+        // 2. 頁面載入與初始化
         document.addEventListener('DOMContentLoaded', () => {
             const today = new Date();
             const yearMonth = today.toISOString().slice(0, 7);
             document.getElementById('monthFilter').value = yearMonth;
             document.getElementById('inputDate').value = today.toISOString().slice(0, 10);
 
-            // 監聽 Firebase 雲端資料變更（即時同步）
             recordsRef.on('value', (snapshot) => {
                 const cloudData = snapshot.val();
-                
-                // 檢查是否有瀏覽器原本的 localStorage 舊資料
                 const localData = JSON.parse(localStorage.getItem('pnl_tracker_records'));
 
                 if (!cloudData && localData && localData.length > 0) {
-                    // 如果雲端尚無資料，但舊電腦有 localStorage，自動將舊資料同步上傳雲端
                     records = localData;
                     saveData();
-                    console.log('已自動將 localStorage 資料移轉上雲端');
                 } else if (cloudData) {
-                    // 如果雲端已有資料，直接使用雲端資料
                     records = Array.isArray(cloudData) ? cloudData : Object.values(cloudData);
                 } else {
                     records = [];
@@ -185,14 +208,11 @@
             });
         });
 
-        // 儲存資料到 Firebase 雲端
         function saveData() {
             recordsRef.set(records);
         }
 
-        // ----------------------------------------------------
-        // 3. 匯入與匯出邏輯 (相容多種 JSON 格式)
-        // ----------------------------------------------------
+        // 3. 匯入與匯出邏輯
         function importData(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -221,6 +241,8 @@
                             asset: item.asset || '未指定',
                             pnl: parseFloat(item.pnl) || 0,
                             fee: parseFloat(item.fee) || 0,
+                            targetProfit: parseFloat(item.targetProfit) || 0,
+                            maxLoss: parseFloat(item.maxLoss) || 0,
                             note: item.note || ''
                         }));
 
@@ -261,6 +283,8 @@
                 asset: document.getElementById('inputAsset').value.trim(),
                 pnl: parseFloat(document.getElementById('inputPnL').value) || 0,
                 fee: parseFloat(document.getElementById('inputFee').value) || 0,
+                targetProfit: parseFloat(document.getElementById('inputTargetProfit').value) || 0,
+                maxLoss: parseFloat(document.getElementById('inputMaxLoss').value) || 0,
                 note: document.getElementById('inputNote').value.trim()
             };
 
@@ -273,6 +297,8 @@
             document.getElementById('inputAsset').value = '';
             document.getElementById('inputPnL').value = '';
             document.getElementById('inputFee').value = '0';
+            document.getElementById('inputTargetProfit').value = '';
+            document.getElementById('inputMaxLoss').value = '';
             document.getElementById('inputNote').value = '';
 
             renderApp();
@@ -287,12 +313,34 @@
             }
         }
 
+        // 備註 Modal 彈窗控制
+        function openNoteModal(id) {
+            const record = records.find(r => r.id === id);
+            if (!record) return;
+
+            document.getElementById('modalDateAsset').textContent = `${record.date} | ${record.platform} - ${record.asset}`;
+            document.getElementById('modalNoteContent').textContent = record.note || '無備註說明';
+            document.getElementById('noteModal').classList.remove('hidden');
+        }
+
+        function closeNoteModal() {
+            document.getElementById('noteModal').classList.add('hidden');
+        }
+
+        // 風報比計算邏輯輔助函式
+        function calculateRRR(targetProfit, maxLoss) {
+            if (!targetProfit || !maxLoss || maxLoss <= 0) return '-';
+            const ratio = (targetProfit / maxLoss).toFixed(2);
+            return `1 : ${ratio}`;
+        }
+
         // 主渲染邏輯
         function renderApp() {
             const selectedMonth = document.getElementById('monthFilter').value;
             
             const filteredRecords = records.filter(r => r.date && r.date.startsWith(selectedMonth));
-            filteredRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
+            // 列表排序：日期由新到舊
+            const sortedRecords = [...filteredRecords].sort((a, b) => new Date(b.date) - new Date(a.date));
 
             let totalNetPnL = 0;
             let totalFee = 0;
@@ -319,22 +367,37 @@
             document.getElementById('statTotalCount').textContent = `${totalCount} 筆`;
             document.getElementById('statTotalFee').textContent = `$ ${totalFee.toLocaleString()}`;
 
+            // 渲染表格內容
             const tableBody = document.getElementById('recordsTableBody');
-            if (filteredRecords.length === 0) {
-                tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-slate-500">當月無交易紀錄</td></tr>`;
+            if (sortedRecords.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="9" class="text-center py-6 text-slate-500">當月無交易紀錄</td></tr>`;
             } else {
-                tableBody.innerHTML = filteredRecords.map(r => {
+                tableBody.innerHTML = sortedRecords.map(r => {
                     const netPnL = r.pnl - r.fee;
                     const pnlClass = netPnL >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                    const rrrDisplay = calculateRRR(r.targetProfit, r.maxLoss);
+                    
+                    const noteText = r.note ? r.note : '-';
+                    const isLongNote = r.note && r.note.length > 12;
+
                     return `
                         <tr class="hover:bg-slate-700/30 transition">
                             <td class="py-3 px-4 font-mono text-slate-300">${r.date}</td>
                             <td class="py-3 px-4"><span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded border border-slate-600">${r.platform}</span></td>
                             <td class="py-3 px-4 font-medium">${r.asset}</td>
+                            <td class="py-3 px-4 text-center font-mono text-xs text-amber-300 font-semibold">${rrrDisplay}</td>
                             <td class="py-3 px-4 text-right font-mono text-slate-300">${r.pnl.toLocaleString()}</td>
                             <td class="py-3 px-4 text-right font-mono text-slate-400">${r.fee.toLocaleString()}</td>
                             <td class="py-3 px-4 text-right font-mono font-bold ${pnlClass}">${netPnL > 0 ? '+' : ''}${netPnL.toLocaleString()}</td>
-                            <td class="py-3 px-4 text-slate-400 text-xs max-w-[150px] truncate">${r.note || '-'}</td>
+                            <td class="py-3 px-4 text-slate-400 text-xs max-w-[160px]">
+                                ${isLongNote ? `
+                                    <button onclick="openNoteModal('${r.id}')" class="text-left text-emerald-400 hover:underline truncate w-full block">
+                                        🔍 ${r.note.slice(0, 10)}...
+                                    </button>
+                                ` : `
+                                    <span class="truncate block" title="${noteText}">${noteText}</span>
+                                `}
+                            </td>
                             <td class="py-3 px-4 text-center">
                                 <button onclick="deleteRecord('${r.id}')" class="text-slate-500 hover:text-rose-400 transition text-xs">刪除</button>
                             </td>
@@ -343,11 +406,12 @@
                 }).join('');
             }
 
-            renderChart(platformPnLMap);
+            renderPlatformChart(platformPnLMap);
+            renderDailyCumulativeChart(filteredRecords);
         }
 
         // 渲染 Chart.js 平台損益圖表
-        function renderChart(platformData) {
+        function renderPlatformChart(platformData) {
             const ctx = document.getElementById('platformChart').getContext('2d');
             const labels = Object.keys(platformData);
             const dataValues = Object.values(platformData);
@@ -377,6 +441,91 @@
                     maintainAspectRatio: false,
                     plugins: {
                         legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        },
+                        y: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 渲染本月每日累計損益曲線圖 (Cumulative PnL)
+        function renderDailyCumulativeChart(monthlyRecords) {
+            const ctx = document.getElementById('dailyCumulativeChart').getContext('2d');
+
+            if (dailyCumulativeChartInstance) {
+                dailyCumulativeChartInstance.destroy();
+            }
+
+            if (monthlyRecords.length === 0) {
+                dailyCumulativeChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: ['無資料'], datasets: [{ data: [0] }] },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+                return;
+            }
+
+            // 按日期正序 (舊到新) 排序
+            const chronological = [...monthlyRecords].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // 按日期加總每日淨損益
+            const dailyNetMap = {};
+            chronological.forEach(r => {
+                const day = r.date;
+                const net = r.pnl - r.fee;
+                dailyNetMap[day] = (dailyNetMap[day] || 0) + net;
+            });
+
+            // 計算累計損益 (Cumulative PnL)
+            const sortedDates = Object.keys(dailyNetMap).sort();
+            const cumulativeData = [];
+            let cumulativeSum = 0;
+
+            sortedDates.forEach(date => {
+                cumulativeSum += dailyNetMap[date];
+                cumulativeData.push(cumulativeSum);
+            });
+
+            const lastVal = cumulativeData[cumulativeData.length - 1] || 0;
+            const lineColor = lastVal >= 0 ? '#10b981' : '#f43f5e';
+            const fillColor = lastVal >= 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
+
+            dailyCumulativeChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: sortedDates,
+                    datasets: [{
+                        label: '累計淨損益 (NTD)',
+                        data: cumulativeData,
+                        borderColor: lineColor,
+                        backgroundColor: fillColor,
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.25,
+                        pointBackgroundColor: lineColor,
+                        pointRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1' } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ` 累計損益: $ ${context.parsed.y.toLocaleString()}`;
+                                }
+                            }
+                        }
                     },
                     scales: {
                         x: {

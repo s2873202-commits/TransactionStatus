@@ -1,4 +1,3 @@
-// 渲染本月「每日單日損益」曲線圖 (Daily PnL Trend)
 function renderDailyCumulativeChart(monthlyRecords) {
     const ctx = document.getElementById('dailyCumulativeChart').getContext('2d');
 
@@ -15,10 +14,8 @@ function renderDailyCumulativeChart(monthlyRecords) {
         return;
     }
 
-    // 按日期正序 (舊到新) 排序
     const chronological = [...monthlyRecords].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-    // 按日期加總「當天」的淨損益 (實現損益 - 手續費)
     const dailyNetMap = {};
     chronological.forEach(r => {
         const day = r.date;
@@ -29,7 +26,6 @@ function renderDailyCumulativeChart(monthlyRecords) {
     const sortedDates = Object.keys(dailyNetMap).sort();
     const dailyData = sortedDates.map(date => dailyNetMap[date]);
 
-    // 設定基準線（0元線）與顏色動態處理
     dailyCumulativeChartInstance = new Chart(ctx, {
         type: 'line',
         data: {

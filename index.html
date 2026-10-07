@@ -1,87 +1,107 @@
-// 渲染本月「每日單日損益」曲線圖 (Daily PnL Trend)
-function renderDailyCumulativeChart(monthlyRecords) {
-    const ctx = document.getElementById('dailyCumulativeChart').getContext('2d');
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多平台交易損益紀錄工具 (雲端同步進階版)</title>
+    <!-- 引入 Tailwind CSS 快速樣式庫 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Chart.js 圖表庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 引入 Firebase 8.x SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
 
-    if (dailyCumulativeChartInstance) {
-        dailyCumulativeChartInstance.destroy();
-    }
+    <div class="max-w-6xl mx-auto space-y-6">
+        
+        <!-- 頁首與操作 -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+            <div>
+                <h1 class="text-2xl font-bold text-emerald-400">📊 多平台交易損益紀錄工具</h1>
+                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步中）</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+                <label class="text-sm text-slate-300">統計月份：</label>
+                <input type="month" id="monthFilter" onchange="renderApp()" class="bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                <!-- 匯入與匯出按鈕 -->
+                <button onclick="document.getElementById('importFileInput').click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯入 JSON</button>
+                <input type="file" id="importFileInput" accept=".json" onchange="importData(event)" class="hidden">
+                <button onclick="exportData()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯出 JSON</button>
+            </div>
+        </div>
 
-    if (monthlyRecords.length === 0) {
-        dailyCumulativeChartInstance = new Chart(ctx, {
-            type: 'line',
-            data: { labels: ['無資料'], datasets: [{ data: [0] }] },
-            options: { responsive: true, maintainAspectRatio: false }
-        });
-        return;
-    }
+        <!-- 當月數據統計卡片 -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">當月淨損益 (NTD)</div>
+                <div id="statMonthlyPnL" class="text-2xl font-extrabold mt-2 text-slate-200">$ 0</div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">當月勝率</div>
+                <div id="statWinRate" class="text-2xl font-bold text-indigo-400 mt-2">0.0 %</div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">總交易筆數</div>
+                <div id="statTotalCount" class="text-2xl font-bold text-amber-400 mt-2">0 筆</div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">累計手續費/稅</div>
+                <div id="statTotalFee" class="text-2xl font-bold text-rose-400 mt-2">$ 0</div>
+            </div>
+        </div>
 
-    // 按日期正序 (舊到新) 排序
-    const chronological = [...monthlyRecords].sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    // 按日期加總「當天」的淨損益 (實現損益 - 手續費)
-    const dailyNetMap = {};
-    chronological.forEach(r => {
-        const day = r.date;
-        const net = r.pnl - r.fee;
-        dailyNetMap[day] = (dailyNetMap[day] || 0) + net;
-    });
-
-    const sortedDates = Object.keys(dailyNetMap).sort();
-    const dailyData = sortedDates.map(date => dailyNetMap[date]);
-
-    // 設定基準線（0元線）與顏色動態處理
-    dailyCumulativeChartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: sortedDates,
-            datasets: [{
-                label: '單日淨損益 (NTD)',
-                data: dailyData,
-                borderColor: '#38bdf8', // 使用天藍色作為主線條
-                backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                borderWidth: 2,
-                fill: true,
-                tension: 0.2, // 微幅平滑曲線
-                pointRadius: 5,
-                // 設定數據點顏色：當日獲利為綠色，虧損為紅色
-                pointBackgroundColor: dailyData.map(val => val >= 0 ? '#10b981' : '#f43f5e'),
-                pointBorderColor: dailyData.map(val => val >= 0 ? '#10b981' : '#f43f5e')
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { labels: { color: '#cbd5e1' } },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const val = context.parsed.y;
-                            const prefix = val > 0 ? '+' : '';
-                            return ` 單日損益: ${prefix}$ ${val.toLocaleString()}`;
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    ticks: { color: '#94a3b8' },
-                    grid: { color: '#334155' }
-                },
-                y: {
-                    ticks: { 
-                        color: '#94a3b8',
-                        callback: function(value) {
-                            return (value > 0 ? '+' : '') + value.toLocaleString();
-                        }
-                    },
-                    grid: { 
-                        // 將 0 軸顯示為明顯的白線，方便對比盈虧
-                        color: (context) => context.tick.value === 0 ? '#94a3b8' : '#334155',
-                        lineWidth: (context) => context.tick.value === 0 ? 1.5 : 1
-                    }
-                }
-            }
-        }
-    });
-}
+        <!-- 主要區域：新增表單與平台分佈圖 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- 新增紀錄表單 -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md lg:col-span-1">
+                <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">➕ 新增交易紀錄</h2>
+                <form id="pnlForm" onsubmit="handleAddRecord(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">交易日期</label>
+                        <input type="date" id="inputDate" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">交易平台</label>
+                        <input type="text" id="inputPlatform" placeholder="例如：凱基證券、口袋證券、富邦證券" list="platformOptions" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        <datalist id="platformOptions">
+                            <option value="凱基證券">
+                            <option value="口袋證券">
+                            <option value="統一證券">
+                            <option value="國泰證券">
+                            <option value="群益證券">
+                            <option value="富邦證券">
+                        </datalist>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">交易標的</label>
+                        <input type="text" id="inputAsset" placeholder="例如：台積電 (2330)、臺指期" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">實現損益 (可為負)</label>
+                            <input type="number" id="inputPnL" placeholder="15000 或 -3000" step="any" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">手續費 / 交易稅</label>
+                            <input type="number" id="inputFee" placeholder="0" min="0" step="any" value="0" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        </div>
+                    </div>
+                    <!-- 風報比設定區塊 -->
+                    <div class="grid grid-cols-2 gap-3 p-3 bg-slate-700/40 rounded-lg border border-slate-700">
+                        <div>
+                            <label class="block text-xs text-emerald-400 mb-1">預計獲利 (TP)</label>
+                            <input type="number" id="inputTargetProfit" placeholder="例如 6000" min="0" step="any" class="w-full bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 text-xs focus:outline-none focus:border-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-rose-400 mb-1">預計虧損/停損 (SL)</label>
+                            <input type="number" id="inputMaxLoss" placeholder="例如 2000" min="0" step="any" class="w-full bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 text-xs focus:outline-none focus:border-rose-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">備註 / 策略</label>
+                        <textarea id="inputNote" rows="2" placeholder="例如：VWAP突破追單、當沖停損，輸入較多文字可於列表點擊查看" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500 text-sm"></textarea>
+                    </div>
+                    <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition shadow-md">儲存紀錄</button>

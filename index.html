@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多平台交易損益紀錄工具 (防資料遺失修正版)</title>
+    <title>多平台交易損益紀錄工具 (雲端同步進階版)</title>
     <!-- 引入 Tailwind CSS 快速樣式庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 Chart.js 圖表庫 -->
@@ -20,7 +20,7 @@
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
             <div>
                 <h1 class="text-2xl font-bold text-emerald-400">📊 多平台交易損益紀錄工具</h1>
-                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步）</p>
+                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步中）</p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
                 <label class="text-sm text-slate-300">統計月份：</label>
@@ -115,11 +115,11 @@
             </div>
         </div>
 
-        <!-- 每日獨立損益曲線圖 -->
+        <!-- 每日累計損益資金曲線圖 -->
         <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md">
-            <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📉 本月份單日損益圖</h2>
+            <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📉 本月份每日累計損益曲線</h2>
             <div class="h-[280px] relative">
-                <canvas id="dailyPnLChart"></canvas>
+                <canvas id="dailyCumulativeChart"></canvas>
             </div>
         </div>
 
@@ -163,7 +163,7 @@
     </div>
 
     <script>
-        // 1. 原本的 Firebase 金鑰與完整配置
+        // 1. Firebase 設定
         const firebaseConfig = {
             apiKey: "AIzaSyCWx0lVV819nGYeEyCJ9ZSbJhAUqGCO5Ro",
             authDomain: "loan-867b2.firebaseapp.com",
@@ -176,15 +176,13 @@
         };
 
         // 初始化 Firebase
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
+        firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
         const recordsRef = db.ref('pnl_records');
 
         let records = [];
         let chartInstance = null;
-        let dailyPnLChartInstance = null;
+        let dailyCumulativeChartInstance = null;
 
         // 2. 頁面載入與初始化
         document.addEventListener('DOMContentLoaded', () => {
@@ -193,45 +191,25 @@
             document.getElementById('monthFilter').value = yearMonth;
             document.getElementById('inputDate').value = today.toISOString().slice(0, 10);
 
-            // 監聽 Firebase 變更
             recordsRef.on('value', (snapshot) => {
                 const cloudData = snapshot.val();
-                
-                if (cloudData) {
-                    // Firebase 有資料，解析為陣列
-                    if (Array.isArray(cloudData)) {
-                        records = cloudData.filter(item => item !== null);
-                    } else if (typeof cloudData === 'object') {
-                        records = Object.keys(cloudData).map(key => {
-                            return typeof cloudData[key] === 'object' ? { ...cloudData[key], firebaseKey: key } : cloudData[key];
-                        });
-                    }
-                    // 同步份備份至 LocalStorage
-                    localStorage.setItem('pnl_tracker_records', JSON.stringify(records));
+                const localData = JSON.parse(localStorage.getItem('pnl_tracker_records'));
+
+                if (!cloudData && localData && localData.length > 0) {
+                    records = localData;
+                    saveData();
+                } else if (cloudData) {
+                    records = Array.isArray(cloudData) ? cloudData : Object.values(cloudData);
                 } else {
-                    // 雲端目前無資料，檢查是否有 LocalStorage 備份
-                    const localData = JSON.parse(localStorage.getItem('pnl_tracker_records'));
-                    if (localData && localData.length > 0) {
-                        records = localData;
-                        // 僅在使用者確定時補還資料，避免無意覆蓋
-                        saveData(true);
-                    } else {
-                        records = [];
-                    }
+                    records = [];
                 }
 
                 renderApp();
             });
         });
 
-        // 安全儲存函式
-        function saveData(forceSet = false) {
-            // 防護：若是空陣列且非強制，不上傳空資料，防止意外清空資料庫
-            if (records.length === 0 && !forceSet) {
-                return;
-            }
+        function saveData() {
             recordsRef.set(records);
-            localStorage.setItem('pnl_tracker_records', JSON.stringify(records));
         }
 
         // 3. 匯入與匯出邏輯
@@ -240,3 +218,339 @@
             if (!file) return;
 
             const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    let importedRecords = JSON.parse(event.target.result);
+
+                    if (!Array.isArray(importedRecords) && typeof importedRecords === 'object') {
+                        if (Array.isArray(importedRecords.records)) {
+                            importedRecords = importedRecords.records;
+                        } else if (Array.isArray(importedRecords.data)) {
+                            importedRecords = importedRecords.data;
+                        } else {
+                            const arrayKey = Object.keys(importedRecords).find(key => Array.isArray(importedRecords[key]));
+                            if (arrayKey) importedRecords = importedRecords[arrayKey];
+                        }
+                    }
+
+                    if (Array.isArray(importedRecords)) {
+                        importedRecords = importedRecords.map(item => ({
+                            id: item.id || Date.now().toString() + Math.random().toString().slice(2, 6),
+                            date: item.date || new Date().toISOString().slice(0, 10),
+                            platform: item.platform || '未指定',
+                            asset: item.asset || '未指定',
+                            pnl: parseFloat(item.pnl) || 0,
+                            fee: parseFloat(item.fee) || 0,
+                            targetProfit: parseFloat(item.targetProfit) || 0,
+                            maxLoss: parseFloat(item.maxLoss) || 0,
+                            note: item.note || ''
+                        }));
+
+                        const isOverwrite = confirm('點擊「確定」將【覆蓋】雲端資料；點擊「取消」將【合併】新舊資料。');
+                        
+                        if (isOverwrite) {
+                            records = importedRecords;
+                        } else {
+                            const existingIds = new Set(records.map(r => r.id));
+                            importedRecords.forEach(item => {
+                                if (!existingIds.has(item.id)) {
+                                    records.push(item);
+                                }
+                            });
+                        }
+
+                        saveData();
+                        alert('成功匯入資料並已同步至雲端！');
+                    } else {
+                        alert('匯入失敗：JSON 格式不符。');
+                    }
+                } catch (err) {
+                    alert('讀取檔案失敗，請確定是否為正確的 JSON 格式檔案。');
+                }
+                e.target.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        // 新增紀錄處理
+        function handleAddRecord(e) {
+            e.preventDefault();
+            
+            const newRecord = {
+                id: Date.now().toString(),
+                date: document.getElementById('inputDate').value,
+                platform: document.getElementById('inputPlatform').value.trim(),
+                asset: document.getElementById('inputAsset').value.trim(),
+                pnl: parseFloat(document.getElementById('inputPnL').value) || 0,
+                fee: parseFloat(document.getElementById('inputFee').value) || 0,
+                targetProfit: parseFloat(document.getElementById('inputTargetProfit').value) || 0,
+                maxLoss: parseFloat(document.getElementById('inputMaxLoss').value) || 0,
+                note: document.getElementById('inputNote').value.trim()
+            };
+
+            records.push(newRecord);
+            saveData();
+
+            const recordMonth = newRecord.date.slice(0, 7);
+            document.getElementById('monthFilter').value = recordMonth;
+
+            document.getElementById('inputAsset').value = '';
+            document.getElementById('inputPnL').value = '';
+            document.getElementById('inputFee').value = '0';
+            document.getElementById('inputTargetProfit').value = '';
+            document.getElementById('inputMaxLoss').value = '';
+            document.getElementById('inputNote').value = '';
+
+            renderApp();
+        }
+
+        // 刪除紀錄
+        function deleteRecord(id) {
+            if (confirm('確定要刪除這筆紀錄嗎？')) {
+                records = records.filter(r => r.id !== id);
+                saveData();
+                renderApp();
+            }
+        }
+
+        // 備註 Modal 彈窗控制
+        function openNoteModal(id) {
+            const record = records.find(r => r.id === id);
+            if (!record) return;
+
+            document.getElementById('modalDateAsset').textContent = `${record.date} | ${record.platform} - ${record.asset}`;
+            document.getElementById('modalNoteContent').textContent = record.note || '無備註說明';
+            document.getElementById('noteModal').classList.remove('hidden');
+        }
+
+        function closeNoteModal() {
+            document.getElementById('noteModal').classList.add('hidden');
+        }
+
+        // 風報比計算邏輯輔助函式
+        function calculateRRR(targetProfit, maxLoss) {
+            if (!targetProfit || !maxLoss || maxLoss <= 0) return '-';
+            const ratio = (targetProfit / maxLoss).toFixed(2);
+            return `1 : ${ratio}`;
+        }
+
+        // 主渲染邏輯
+        function renderApp() {
+            const selectedMonth = document.getElementById('monthFilter').value;
+            
+            const filteredRecords = records.filter(r => r.date && r.date.startsWith(selectedMonth));
+            // 列表排序：日期由新到舊
+            const sortedRecords = [...filteredRecords].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            let totalNetPnL = 0;
+            let totalFee = 0;
+            let winCount = 0;
+            const platformPnLMap = {};
+
+            filteredRecords.forEach(r => {
+                const net = r.pnl - r.fee;
+                totalNetPnL += net;
+                totalFee += r.fee;
+                if (net > 0) winCount++;
+
+                platformPnLMap[r.platform] = (platformPnLMap[r.platform] || 0) + net;
+            });
+
+            const totalCount = filteredRecords.length;
+            const winRate = totalCount > 0 ? ((winCount / totalCount) * 100).toFixed(1) : '0.0';
+
+            const pnlElem = document.getElementById('statMonthlyPnL');
+            pnlElem.textContent = `$ ${totalNetPnL.toLocaleString()}`;
+            pnlElem.className = `text-2xl font-extrabold mt-2 ${totalNetPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+            document.getElementById('statWinRate').textContent = `${winRate} %`;
+            document.getElementById('statTotalCount').textContent = `${totalCount} 筆`;
+            document.getElementById('statTotalFee').textContent = `$ ${totalFee.toLocaleString()}`;
+
+            // 渲染表格內容
+            const tableBody = document.getElementById('recordsTableBody');
+            if (sortedRecords.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="9" class="text-center py-6 text-slate-500">當月無交易紀錄</td></tr>`;
+            } else {
+                tableBody.innerHTML = sortedRecords.map(r => {
+                    const netPnL = r.pnl - r.fee;
+                    const pnlClass = netPnL >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                    const rrrDisplay = calculateRRR(r.targetProfit, r.maxLoss);
+                    
+                    const noteText = r.note ? r.note : '-';
+                    const isLongNote = r.note && r.note.length > 12;
+
+                    return `
+                        <tr class="hover:bg-slate-700/30 transition">
+                            <td class="py-3 px-4 font-mono text-slate-300">${r.date}</td>
+                            <td class="py-3 px-4"><span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded border border-slate-600">${r.platform}</span></td>
+                            <td class="py-3 px-4 font-medium">${r.asset}</td>
+                            <td class="py-3 px-4 text-center font-mono text-xs text-amber-300 font-semibold">${rrrDisplay}</td>
+                            <td class="py-3 px-4 text-right font-mono text-slate-300">${r.pnl.toLocaleString()}</td>
+                            <td class="py-3 px-4 text-right font-mono text-slate-400">${r.fee.toLocaleString()}</td>
+                            <td class="py-3 px-4 text-right font-mono font-bold ${pnlClass}">${netPnL > 0 ? '+' : ''}${netPnL.toLocaleString()}</td>
+                            <td class="py-3 px-4 text-slate-400 text-xs max-w-[160px]">
+                                ${isLongNote ? `
+                                    <button onclick="openNoteModal('${r.id}')" class="text-left text-emerald-400 hover:underline truncate w-full block">
+                                        🔍 ${r.note.slice(0, 10)}...
+                                    </button>
+                                ` : `
+                                    <span class="truncate block" title="${noteText}">${noteText}</span>
+                                `}
+                            </td>
+                            <td class="py-3 px-4 text-center">
+                                <button onclick="deleteRecord('${r.id}')" class="text-slate-500 hover:text-rose-400 transition text-xs">刪除</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            renderPlatformChart(platformPnLMap);
+            renderDailyCumulativeChart(filteredRecords);
+        }
+
+        // 渲染 Chart.js 平台損益圖表
+        function renderPlatformChart(platformData) {
+            const ctx = document.getElementById('platformChart').getContext('2d');
+            const labels = Object.keys(platformData);
+            const dataValues = Object.values(platformData);
+
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            const backgroundColors = dataValues.map(val => val >= 0 ? 'rgba(52, 211, 153, 0.7)' : 'rgba(251, 113, 133, 0.7)');
+            const borderColors = dataValues.map(val => val >= 0 ? '#10b981' : '#f43f5e');
+
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels.length > 0 ? labels : ['無資料'],
+                    datasets: [{
+                        label: '當月淨損益',
+                        data: labels.length > 0 ? dataValues : [0],
+                        backgroundColor: backgroundColors,
+                        borderColor: borderColors,
+                        borderWidth: 1.5,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        },
+                        y: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 渲染本月每日累計損益曲線圖 (Cumulative PnL)
+        function renderDailyCumulativeChart(monthlyRecords) {
+            const ctx = document.getElementById('dailyCumulativeChart').getContext('2d');
+
+            if (dailyCumulativeChartInstance) {
+                dailyCumulativeChartInstance.destroy();
+            }
+
+            if (monthlyRecords.length === 0) {
+                dailyCumulativeChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: ['無資料'], datasets: [{ data: [0] }] },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+                return;
+            }
+
+            // 按日期正序 (舊到新) 排序
+            const chronological = [...monthlyRecords].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // 按日期加總每日淨損益
+            const dailyNetMap = {};
+            chronological.forEach(r => {
+                const day = r.date;
+                const net = r.pnl - r.fee;
+                dailyNetMap[day] = (dailyNetMap[day] || 0) + net;
+            });
+
+            // 計算累計損益 (Cumulative PnL)
+            const sortedDates = Object.keys(dailyNetMap).sort();
+            const cumulativeData = [];
+            let cumulativeSum = 0;
+
+            sortedDates.forEach(date => {
+                cumulativeSum += dailyNetMap[date];
+                cumulativeData.push(cumulativeSum);
+            });
+
+            const lastVal = cumulativeData[cumulativeData.length - 1] || 0;
+            const lineColor = lastVal >= 0 ? '#10b981' : '#f43f5e';
+            const fillColor = lastVal >= 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
+
+            dailyCumulativeChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: sortedDates,
+                    datasets: [{
+                        label: '累計淨損益 (NTD)',
+                        data: cumulativeData,
+                        borderColor: lineColor,
+                        backgroundColor: fillColor,
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.25,
+                        pointBackgroundColor: lineColor,
+                        pointRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5e1' } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ` 累計損益: $ ${context.parsed.y.toLocaleString()}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        },
+                        y: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 匯出 JSON 資料備份
+        function exportData() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `pnl_backup_${new Date().toISOString().slice(0,10)}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
+    </script>
+</body>
+</html>

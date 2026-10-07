@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多平台交易損益紀錄工具 (雲端同步進階版)</title>
+    <title>多平台交易損益紀錄工具 (防資料遺失修正版)</title>
     <!-- 引入 Tailwind CSS 快速樣式庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 Chart.js 圖表庫 -->
@@ -20,7 +20,7 @@
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
             <div>
                 <h1 class="text-2xl font-bold text-emerald-400">📊 多平台交易損益紀錄工具</h1>
-                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步中）</p>
+                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步）</p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
                 <label class="text-sm text-slate-300">統計月份：</label>
@@ -115,11 +115,11 @@
             </div>
         </div>
 
-        <!-- 每日累計損益資金曲線圖 -->
+        <!-- 每日獨立損益曲線圖 -->
         <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md">
-            <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📉 本月份每日累計損益曲線</h2>
+            <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📉 本月份單日損益圖</h2>
             <div class="h-[280px] relative">
-                <canvas id="dailyCumulativeChart"></canvas>
+                <canvas id="dailyPnLChart"></canvas>
             </div>
         </div>
 
@@ -163,7 +163,7 @@
     </div>
 
     <script>
-        // 1. Firebase 設定
+         // 1. Firebase 設定
         const firebaseConfig = {
             apiKey: "AIzaSyCWx0lVV819nGYeEyCJ9ZSbJhAUqGCO5Ro",
             authDomain: "loan-867b2.firebaseapp.com",
@@ -176,13 +176,15 @@
         };
 
         // 初始化 Firebase
-        firebase.initializeApp(firebaseConfig);
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
         const db = firebase.database();
         const recordsRef = db.ref('pnl_records');
 
         let records = [];
         let chartInstance = null;
-        let dailyCumulativeChartInstance = null;
+        let dailyPnLChartInstance = null;
 
         // 2. 頁面載入與初始化
         document.addEventListener('DOMContentLoaded', () => {
@@ -191,25 +193,45 @@
             document.getElementById('monthFilter').value = yearMonth;
             document.getElementById('inputDate').value = today.toISOString().slice(0, 10);
 
+            // 監聽 Firebase 變更
             recordsRef.on('value', (snapshot) => {
                 const cloudData = snapshot.val();
-                const localData = JSON.parse(localStorage.getItem('pnl_tracker_records'));
-
-                if (!cloudData && localData && localData.length > 0) {
-                    records = localData;
-                    saveData();
-                } else if (cloudData) {
-                    records = Array.isArray(cloudData) ? cloudData : Object.values(cloudData);
+                
+                if (cloudData) {
+                    // Firebase 有資料，解析為陣列
+                    if (Array.isArray(cloudData)) {
+                        records = cloudData.filter(item => item !== null);
+                    } else if (typeof cloudData === 'object') {
+                        records = Object.keys(cloudData).map(key => {
+                            return typeof cloudData[key] === 'object' ? { ...cloudData[key], firebaseKey: key } : cloudData[key];
+                        });
+                    }
+                    // 同步份備份至 LocalStorage
+                    localStorage.setItem('pnl_tracker_records', JSON.stringify(records));
                 } else {
-                    records = [];
+                    // 雲端目前無資料，檢查是否有 LocalStorage 備份
+                    const localData = JSON.parse(localStorage.getItem('pnl_tracker_records'));
+                    if (localData && localData.length > 0) {
+                        records = localData;
+                        // 僅在使用者確定時補還資料，避免無意覆蓋
+                        saveData(true);
+                    } else {
+                        records = [];
+                    }
                 }
 
                 renderApp();
             });
         });
 
-        function saveData() {
+        // 安全儲存函式
+        function saveData(forceSet = false) {
+            // 防護：若是空陣列且非強制，不上傳空資料，防止意外清空資料庫
+            if (records.length === 0 && !forceSet) {
+                return;
+            }
             recordsRef.set(records);
+            localStorage.setItem('pnl_tracker_records', JSON.stringify(records));
         }
 
         // 3. 匯入與匯出邏輯
@@ -259,7 +281,7 @@
                             });
                         }
 
-                        saveData();
+                        saveData(true);
                         alert('成功匯入資料並已同步至雲端！');
                     } else {
                         alert('匯入失敗：JSON 格式不符。');
@@ -289,7 +311,7 @@
             };
 
             records.push(newRecord);
-            saveData();
+            saveData(true);
 
             const recordMonth = newRecord.date.slice(0, 7);
             document.getElementById('monthFilter').value = recordMonth;
@@ -308,7 +330,7 @@
         function deleteRecord(id) {
             if (confirm('確定要刪除這筆紀錄嗎？')) {
                 records = records.filter(r => r.id !== id);
-                saveData();
+                saveData(true);
                 renderApp();
             }
         }
@@ -339,7 +361,6 @@
             const selectedMonth = document.getElementById('monthFilter').value;
             
             const filteredRecords = records.filter(r => r.date && r.date.startsWith(selectedMonth));
-            // 列表排序：日期由新到舊
             const sortedRecords = [...filteredRecords].sort((a, b) => new Date(b.date) - new Date(a.date));
 
             let totalNetPnL = 0;
@@ -407,7 +428,7 @@
             }
 
             renderPlatformChart(platformPnLMap);
-            renderDailyCumulativeChart(filteredRecords);
+            renderDailyPnLChart(filteredRecords);
         }
 
         // 渲染 Chart.js 平台損益圖表
@@ -456,16 +477,16 @@
             });
         }
 
-        // 渲染本月每日累計損益曲線圖 (Cumulative PnL)
-        function renderDailyCumulativeChart(monthlyRecords) {
-            const ctx = document.getElementById('dailyCumulativeChart').getContext('2d');
+        // 渲染本月每日獨立損益曲線圖 (Daily PnL)
+        function renderDailyPnLChart(monthlyRecords) {
+            const ctx = document.getElementById('dailyPnLChart').getContext('2d');
 
-            if (dailyCumulativeChartInstance) {
-                dailyCumulativeChartInstance.destroy();
+            if (dailyPnLChartInstance) {
+                dailyPnLChartInstance.destroy();
             }
 
             if (monthlyRecords.length === 0) {
-                dailyCumulativeChartInstance = new Chart(ctx, {
+                dailyPnLChartInstance = new Chart(ctx, {
                     type: 'line',
                     data: { labels: ['無資料'], datasets: [{ data: [0] }] },
                     options: { responsive: true, maintainAspectRatio: false }
@@ -473,10 +494,8 @@
                 return;
             }
 
-            // 按日期正序 (舊到新) 排序
             const chronological = [...monthlyRecords].sort((a, b) => new Date(a.date) - new Date(b.date));
 
-            // 按日期加總每日淨損益
             const dailyNetMap = {};
             chronological.forEach(r => {
                 const day = r.date;
@@ -484,34 +503,27 @@
                 dailyNetMap[day] = (dailyNetMap[day] || 0) + net;
             });
 
-            // 計算累計損益 (Cumulative PnL)
             const sortedDates = Object.keys(dailyNetMap).sort();
-            const cumulativeData = [];
-            let cumulativeSum = 0;
+            const dailyPnLData = sortedDates.map(date => dailyNetMap[date]);
 
-            sortedDates.forEach(date => {
-                cumulativeSum += dailyNetMap[date];
-                cumulativeData.push(cumulativeSum);
-            });
+            const pointColors = dailyPnLData.map(val => val >= 0 ? '#10b981' : '#f43f5e');
 
-            const lastVal = cumulativeData[cumulativeData.length - 1] || 0;
-            const lineColor = lastVal >= 0 ? '#10b981' : '#f43f5e';
-            const fillColor = lastVal >= 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
-
-            dailyCumulativeChartInstance = new Chart(ctx, {
+            dailyPnLChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: sortedDates,
                     datasets: [{
-                        label: '累計淨損益 (NTD)',
-                        data: cumulativeData,
-                        borderColor: lineColor,
-                        backgroundColor: fillColor,
+                        label: '單日淨損益 (NTD)',
+                        data: dailyPnLData,
+                        borderColor: '#38bdf8',
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
                         borderWidth: 2,
                         fill: true,
-                        tension: 0.25,
-                        pointBackgroundColor: lineColor,
-                        pointRadius: 4
+                        tension: 0.2,
+                        pointBackgroundColor: pointColors,
+                        pointBorderColor: pointColors,
+                        pointRadius: 5,
+                        pointHoverRadius: 7
                     }]
                 },
                 options: {
@@ -522,7 +534,9 @@
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    return ` 累計損益: $ ${context.parsed.y.toLocaleString()}`;
+                                    const val = context.parsed.y;
+                                    const sign = val > 0 ? '+' : '';
+                                    return ` 單日損益: ${sign}$ ${val.toLocaleString()}`;
                                 }
                             }
                         }
